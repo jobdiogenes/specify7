@@ -178,10 +178,10 @@ export const tableValidForBulkClone = (table: SpecifyTable): boolean =>
   !(
     tables.CollectionObject.strictGetLiteralField('catalogNumber')
       .getUiFormatter()
-      ?.fields.some(
-        (field) =>
-          field.type === 'regex' ||
-          (field.type === 'numeric' && !field.canAutonumber())
+      ?.parts.some(
+        (part) =>
+          part.type === 'regex' ||
+          (part.type === 'numeric' && !part.canAutonumber())
       ) ?? false
   );
 
