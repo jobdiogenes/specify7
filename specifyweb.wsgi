@@ -10,6 +10,9 @@ import sys
 from datetime import datetime
 datetime.strptime('01/14/2014', '%m/%d/%Y')
 
+# ensure that current work directory will be the directory of this wsgi file  
+os.chdir(os.path.dirname(__file__))
+
 sys.path.append(os.path.dirname(__file__))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'specifyweb.settings')
 
