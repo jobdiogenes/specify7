@@ -9,4 +9,6 @@ urlpatterns = [
     url(r'^prep_interactions/', prep_interactions),
     url(r'^prep_availability/(?P<prep_id>\d+)/(?P<iprep_id>\d+)/(?P<iprep_name>\w+)/', prep_availability),
     url(r'^prep_availability/(?P<prep_id>\d+)/', prep_availability),
+
+    url(r'^associated_preps/(?P<model_name>\w+)/', get_associated_preps),
 ]

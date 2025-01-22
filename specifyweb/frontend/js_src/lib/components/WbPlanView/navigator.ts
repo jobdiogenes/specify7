@@ -15,6 +15,7 @@ import type { Relationship } from '../DataModel/specifyField';
 import type { SpecifyTable } from '../DataModel/specifyTable';
 import { getFrontEndOnlyFields, strictGetTable } from '../DataModel/tables';
 import type { Tables } from '../DataModel/types';
+import { getSystemInfo } from '../InitialContext/systemInfo';
 import { getTreeDefinitions, isTreeTable } from '../InitialContext/treeRanks';
 import { hasTablePermission, hasTreeAccess } from '../Permissions/helpers';
 import type { CustomSelectSubtype } from './CustomSelectElement';
@@ -143,7 +144,7 @@ function navigator({
       callbacks.handleTreeRanks({
         ...callbackPayload,
         definitionName: spec.useSpecificTreeInterface
-          ? definitions[0].definition.name ?? anyTreeRank
+          ? (definitions[0].definition.name ?? anyTreeRank)
           : anyTreeRank,
       });
   } else if (valueIsTreeDefinition(parentPartName))
@@ -163,8 +164,8 @@ function navigator({
   const nextTable = isSpecial
     ? table
     : typeof nextField === 'object' && nextField.isRelationship
-    ? nextField.relatedTable
-    : undefined;
+      ? nextField.relatedTable
+      : undefined;
 
   if (typeof nextTable === 'object' && nextField?.isRelationship !== false)
     navigator({
@@ -541,6 +542,16 @@ export function getMappingLineData({
           .filter((field) => {
             let isIncluded = true;
 
+            const disciplineType =
+              getSystemInfo().discipline_type?.toLowerCase();
+            const geoPaleoDisciplines = ['geology', 'invertpaleo', 'vertpaleo'];
+            if (
+              field.name === 'age' &&
+              !geoPaleoDisciplines.includes(disciplineType)
+            ) {
+              return false;
+            }
+
             isIncluded &&=
               generateFieldData === 'all' ||
               field.name === internalState.parsedDefaultValue[0];
@@ -565,9 +576,11 @@ export function getMappingLineData({
                 formatTreeRank(anyTreeRank) ||
               queryBuilderTreeFields.has(field.name);
 
-            isIncluded &&=
-              getFrontEndOnlyFields()[table.name]?.includes(field.name) !==
-              true;
+            // Hide frontend only field
+            isIncluded &&= !(
+              getFrontEndOnlyFields()[table.name]?.includes(field.name) ===
+                true && field.name !== 'age'
+            );
 
             if (field.isRelationship) {
               isIncluded &&=

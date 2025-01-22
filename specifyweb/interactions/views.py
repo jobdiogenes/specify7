@@ -1,28 +1,111 @@
 import json
 from datetime import date
 
+from typing import Iterable
+
 from django import http
 from django.core.exceptions import FieldDoesNotExist
 from django.db import connection, transaction
 from django.views.decorators.http import require_POST
 
+from specifyweb.interactions.cog_preps import (
+    get_consolidated_co_siblings_from_rs,
+    get_co_ids_from_shared_cog_rs,
+    add_consolidated_sibling_co_ids,
+)
 from specifyweb.middleware.general import require_GET
-from specifyweb.permissions.permissions import check_table_permissions
-from specifyweb.specify.api import toJson
-from specifyweb.specify.models import Collectionobject, Loan, Loanpreparation, \
-    Loanreturnpreparation
 from specifyweb.specify.views import login_maybe_required
+from specifyweb.permissions.permissions import check_table_permissions
+from specifyweb.specify.api import toJson, filter_by_collection
+from specifyweb.specify.models import Collectionobject, Collectionobjectgroup, Loan, Loanpreparation, \
+    Loanreturnpreparation, Preparation, Recordset, Recordsetitem
 
+from django.db.models import F, Q, Sum
+from django.db.models.functions import Coalesce
+from django.http import JsonResponse
 
-@require_POST
+def preps_available_rs_django(request, recordset_id):
+    # Get consolidated CO ids if the recordset is a COG
+    rs = Recordset.objects.filter(id=recordset_id).first()
+    cog_co_ids = get_consolidated_co_siblings_from_rs(rs)
+
+    # Determine if isLoan is true
+    isLoan = request.POST.get('isLoan', 'false').lower() == 'true'
+
+    # Base queryset from Preparation
+    queryset = (
+        Preparation.objects
+        .filter(
+            # The determination condition: (d.iscurrent OR d.determinationid IS NULL)
+            # If there are no determinations, __isnull=True covers the NULL case.
+            # If there is a current determination, iscurrent=True covers that case.
+            Q(collectionobject__determinations__iscurrent=True) | Q(collectionobject__determinations__isnull=True),
+            # Filter by recordset or cog_co_ids
+            Q(collectionobject_id__in=Recordsetitem.objects.filter(recordsetid=recordset_id).values('recordid')) |
+            Q(collectionobject_id__in=cog_co_ids),
+            # Filter by collectionmemberid
+            collectionmemberid=request.specify_collection.id
+        )
+        # If isLoan is true, filter by preptype__isloanable
+        .filter(preptype__isloanable=True if isLoan else Q())
+        # Select related to reduce queries and ensure we have needed fields
+        .select_related('collectionobject', 'preptype')
+        .prefetch_related('collectionobject__determinations__taxon')  # If needed, to access taxon fullname
+        # Grouping fields: 
+        # co.catalognumber, co.collectionobjectid, t.fullname, t.taxonid, p.preparationid, pt.name, p.countamt
+        .values(
+            catalognumber=F('collectionobject__catalognumber'),
+            co_id=F('collectionobject__id'),
+            fullname=F('collectionobject__determinations__taxon__fullname'),
+            t_id=F('collectionobject__determinations__taxon__id'),
+            preparationid=F('id'),
+            preptype_name=F('preptype__name'),
+            countamt=F('countamt')
+        )
+        # Annotate sums. Use related_name based on your models:
+        # According to provided models:
+        # loanpreparations -> preparation = FK
+        # giftpreparations -> preparation = FK
+        # exchangeoutpreps -> preparation = FK
+        .annotate(
+            Loaned=Sum(F('loanpreparations__quantity') - F('loanpreparations__quantityreturned')),
+            Gifted=Sum('giftpreparations__quantity'),
+            Exchanged=Sum('exchangeoutpreps__quantity'),
+            LoanQtyResolved=Sum(F('loanpreparations__quantity') - F('loanpreparations__quantityresolved'))
+        )
+        # Compute Available
+        .annotate(
+            Available=F('countamt')
+                      - Coalesce(F('LoanQtyResolved'), 0)
+                      - Coalesce(F('Gifted'), 0)
+                      - Coalesce(F('Exchanged'), 0)
+        )
+        # Order by catalognumber (equivalent to ORDER BY 1)
+        .order_by('catalognumber')
+    )
+
+    # Convert to list of dicts for JSON response
+    rows = list(queryset)
+
+    return JsonResponse(rows, safe=False)
+
+@require_POST # NOTE: why is this a POST request?
 @login_maybe_required
 def preps_available_rs(request, recordset_id):
     "Returns a list of preparations that are loanable?(for loan) based on the CO recordset <recordset_id>."
+    
+    # Get consolidated CO ids if the recordset is a COG
+    rs = Recordset.objects.filter(id=recordset_id).first()
+    cog_co_ids = get_co_ids_from_shared_cog_rs(rs)
+    cog_co_ids = [co_id for co_id in cog_co_ids if co_id is not None]
+    # cog_co_ids = set()
+    cog_co_ids_str = ','.join(map(str, cog_co_ids)) if cog_co_ids else 'NULL'
+
     cursor = connection.cursor()
 
     isLoan = request.POST.get('isLoan', 'false').lower() == 'true'
 
-    sql = """
+    sql = f"""
     SELECT co.catalognumber,
            co.collectionobjectid AS co_id,
            t.fullname,
@@ -53,9 +136,10 @@ def preps_available_rs(request, recordset_id):
     WHERE  p.collectionmemberid = %s
            AND ( d.iscurrent
                   OR d.determinationid IS NULL )
-           AND p.collectionobjectid IN (SELECT recordid
+           AND (p.collectionobjectid IN (SELECT recordid
                                         FROM   recordsetitem
                                         WHERE  recordsetid = %s)
+                OR p.collectionobjectid IN ({cog_co_ids_str}))
     """
 
     # Add `pt.isloanable` if `isLoan`
@@ -68,6 +152,46 @@ def preps_available_rs(request, recordset_id):
     rows = cursor.fetchall()
 
     return http.HttpResponse(toJson(rows), content_type='application/json')
+
+def co_preparation_rows(co_ids: Iterable[int], collection_id: int, is_loan: bool): 
+
+    if len(co_ids) == 0: 
+        return []
+
+    sql = """
+    select co.CatalogNumber, co.collectionObjectId, t.FullName, t.taxonId, p.preparationid, pt.name, p.countAmt, sum(lp.quantity-lp.quantityreturned) Loaned,
+        sum(gp.quantity) Gifted, sum(ep.quantity) Exchanged,
+        p.countAmt - coalesce(sum(lp.quantity-lp.quantityresolved),0) - coalesce(sum(gp.quantity),0) - coalesce(sum(ep.quantity),0) Available,
+    cog.collectionobjectgroupid,
+    cog.name,
+    case cogtype.type when 'Consolidated' then 1 else 0 end
+    from preparation p
+    left join loanpreparation lp on lp.preparationid = p.preparationid
+    left join giftpreparation gp on gp.preparationid = p.preparationid
+    left join exchangeoutprep ep on ep.PreparationID = p.PreparationID
+    inner join collectionobject co on co.CollectionObjectID = p.CollectionObjectID
+    inner join preptype pt on pt.preptypeid = p.preptypeid
+    left join collectionobjectgroupjoin cojo on co.CollectionObjectID = cojo.ChildCOID
+    left join collectionobjectgroup cog on cog.collectionobjectgroupid = cojo.ParentCOGID
+    left join collectionobjectgrouptype cogtype on cogtype.COGTypeID=cog.COGTypeID
+    left join determination d on d.CollectionObjectID = co.CollectionObjectID
+    left join taxon t on t.TaxonID = d.TaxonID
+    where p.collectionmemberid = %s
+    and (d.IsCurrent or d.DeterminationID is null)
+    and co.CollectionObjectID in ({params})
+    """.format(params=",".join("%s" for __ in co_ids))
+
+    # Add `pt.isloanable` if `isLoan`
+    if is_loan:
+        sql += " and pt.isloanable"
+
+    sql += " group by co.CatalogNumber,co.collectionObjectId,t.FullName,t.taxonId,p.preparationid order by co.CatalogNumber;"
+
+    cursor = connection.cursor()
+    cursor.execute(sql, [collection_id] + co_ids)
+    rows = cursor.fetchall()
+    return rows
+
 
 @require_POST
 @login_maybe_required
@@ -87,35 +211,11 @@ def preps_available_ids(request):
 
     isLoan = request.POST.get('isLoan', 'false').lower() == 'true'
 
-    sql = """
-    select co.CatalogNumber, co.collectionObjectId, t.FullName, t.taxonId, p.preparationid, pt.name, p.countAmt, sum(lp.quantity-lp.quantityreturned) Loaned,
-        sum(gp.quantity) Gifted, sum(ep.quantity) Exchanged,
-        p.countAmt - coalesce(sum(lp.quantity-lp.quantityresolved),0) - coalesce(sum(gp.quantity),0) - coalesce(sum(ep.quantity),0) Available
-    from preparation p
-    left join loanpreparation lp on lp.preparationid = p.preparationid
-    left join giftpreparation gp on gp.preparationid = p.preparationid
-    left join exchangeoutprep ep on ep.PreparationID = p.PreparationID
-    inner join collectionobject co on co.CollectionObjectID = p.CollectionObjectID
-    inner join preptype pt on pt.preptypeid = p.preptypeid
-    left join determination d on d.CollectionObjectID = co.CollectionObjectID
-    left join taxon t on t.TaxonID = d.TaxonID
-    where p.collectionmemberid = %s
-    and (d.IsCurrent or d.DeterminationID is null)
-    and co.{id_fld} in ({params})
-    """.format(id_fld=id_fld, params=",".join("%s" for __ in co_ids))
+    co_ids = add_consolidated_sibling_co_ids(co_ids, id_fld)
 
-    # Add `pt.isloanable` if `isLoan`
-    if isLoan:
-        sql += " and pt.isloanable"
-
-    sql += " group by 1,2,3,4,5 order by 1;"
-
-    cursor = connection.cursor()
-    cursor.execute(sql, [int(request.specify_collection.id)] + co_ids)
-    rows = cursor.fetchall()
+    rows = co_preparation_rows(co_ids, int(request.specify_collection.id), isLoan)
 
     return http.HttpResponse(toJson(rows), content_type='application/json')
-
 
 def record_set_or_loan_nos(record_set_id=None, loan_nos=None, by_id=True):
     if record_set_id is not None:
@@ -281,7 +381,7 @@ def prep_availability(request, prep_id, iprep_id=None, iprep_name=None):
     row = cursor.fetchone()
 
     return http.HttpResponse(toJson(row), content_type='application/json')
-    
+
 
 @require_POST
 @login_maybe_required
@@ -307,3 +407,99 @@ def prep_interactions(request):
     rows = cursor.fetchall()
 
     return http.HttpResponse(toJson(rows), content_type='application/json')
+
+expected_models = Collectionobject, Collectionobjectgroup
+
+@require_POST
+@login_maybe_required
+def get_associated_preps(request: http.HttpRequest, model_name: str):
+    expected_models = Collectionobject, Collectionobjectgroup
+
+    model_map = {
+        model.specify_model.name.lower():model
+        for model in expected_models
+    }
+
+    model = model_map.get(model_name.lower(), None)
+
+    if model is None: 
+        return http.JsonResponse({
+            "type": "INVALID_MODEL",
+            "message": f"Invalid model {model_name}, expected one of {', '.join(model_map.keys())}" 
+        }, safe=True, status=400)
+
+    data = json.loads(request.body)
+    field_name = data.get("fieldName", None)
+    records = data.get("records", None)
+    is_loan = data.get("isLoan", False)
+
+    if None in (field_name, records):
+        return http.JsonResponse({
+            "type": "MISSING_REQUIRED",
+            "message": f"Missing at least one required field in body. Required: fieldName, records" 
+        }, safe=True, status=400)
+
+    try: 
+        field = model._meta.get_field(field_name.lower())
+    except FieldDoesNotExist as e: 
+        raise http.Http404(e)
+    
+    # check_table_permissions(request.specify_collection, request.specify_user, model, "read")
+    # check_table_permissions(request.specify_collection, request.specify_user, Preparation, "read")
+
+    records = filter_by_collection(model.objects.filter(**{f"{field.name}__in": records}), request.specify_collection, strict=False)
+    cos = related_cos(records) if model is Collectionobject else related_cos_in_cogs(records)
+    rows = co_preparation_rows([co.id for co in cos], int(request.specify_collection.id), is_loan)
+    return http.HttpResponse(toJson(rows), content_type='application/json')
+
+def related_cos(records): 
+    record_ids = [record.id for record in records]
+    cos = set(records)
+    parent_cogs = Collectionobjectgroup.objects.filter(children__childco_id__in=record_ids)
+
+    cos.update(related_cos_in_cogs(parent_cogs, consolidated_only=True))
+    return cos
+
+def related_cos_in_cogs(cogs, consolidated_only=False): 
+    cos = set()
+
+    cog_ids = tuple(cog.id for cog in cogs)
+    if len(cog_ids) == 0: 
+        return {}
+
+    cos = set(Collectionobject.objects.filter(cojo__parentcog_id__in=cog_ids))
+    cos.update(related_cos_in_parents(cogs, consolidated_only=consolidated_only))
+    cos.update(related_cos_in_children(cogs, consolidated_only=consolidated_only))
+    return cos
+
+def related_cos_in_parents(cogs, consolidated_only=False):
+    cos = set()
+
+    cog_ids = tuple(cog.id for cog in cogs)
+    if len(cog_ids) == 0: 
+        return {}
+
+    parent_filters = Q(children__childcog_id__in=cog_ids)
+    if consolidated_only: 
+        parent_filters &= Q(cogtype__type="Consolidated")
+    parents = Collectionobjectgroup.objects.filter(parent_filters)
+
+    cos = set(Collectionobject.objects.filter(cojo__parentcog_id__in=cog_ids))
+    cos.update(related_cos_in_parents(parents, consolidated_only=consolidated_only))
+    return cos
+
+def related_cos_in_children(cogs, consolidated_only=False): 
+    cos = set()
+
+    cog_ids = tuple(cog.id for cog in cogs)
+    if len(cog_ids) == 0: 
+        return {}
+
+    children_filters = Q(cojo__parentcog_id__in=cog_ids)
+    if consolidated_only: 
+        children_filters &= Q(cogtype__type="Consolidated")
+
+    children = Collectionobjectgroup.objects.filter(children_filters)
+    cos = set(Collectionobject.objects.filter(cojo__parentcog_id__in=cog_ids))
+    cos.update(related_cos_in_children(children, consolidated_only=consolidated_only))
+    return cos

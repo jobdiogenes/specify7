@@ -44,7 +44,10 @@ export function PrepDialog({
     const indexedPreparations = Object.fromEntries(
       group(
         mutatedPreparations.map((preparation) => [
-          getResourceApiUrl('Preparation', preparation.preparationId),
+          getResourceApiUrl(
+            'Preparation',
+            preparation.preparationId as PreparationData['preparationId']
+          ),
           preparation,
         ])
       )
@@ -82,6 +85,14 @@ export function PrepDialog({
 
   const [bulkValue, setBulkValue] = React.useState(0);
   const maxPrep = Math.max(...preparations.map(({ available }) => available));
+
+  const consolidatedPreps = React.useMemo(
+    () =>
+      preparations
+        .map((prepData, index) => [index, prepData] as const)
+        .filter(([_, prepData]) => prepData.isConsolidated),
+    [preparations]
+  );
 
   return (
     <Dialog
@@ -189,7 +200,7 @@ export function PrepDialog({
           }
         }}
       >
-        <table className="grid-table grid-cols-[min-content_repeat(6,auto)] gap-2">
+        <table className="grid-table grid-cols-[min-content_repeat(7,auto)] gap-2">
           <thead>
             <tr>
               <th scope="col">
@@ -201,6 +212,7 @@ export function PrepDialog({
               <th scope="col">
                 {getField(tables.Determination, 'taxon').label}
               </th>
+              <th scope="col">{tables.CollectionObjectGroup.label}</th>
               <th scope="col">
                 {getField(tables.Preparation, 'prepType').label}
               </th>
@@ -215,9 +227,24 @@ export function PrepDialog({
                 key={index}
                 preparation={preparation}
                 selected={selected[index]}
-                onChange={(newSelected): void =>
-                  setSelected(replaceItem(selected, index, newSelected))
-                }
+                onChange={(newSelected): void => {
+                  if (preparation.isConsolidated)
+                    consolidatedPreps.forEach(([prepIndex, prep]) => {
+                      if (prepIndex !== index)
+                        setSelected((selected) =>
+                          replaceItem(
+                            selected,
+                            prepIndex,
+                            newSelected > prep.available
+                              ? prep.available
+                              : newSelected
+                          )
+                        );
+                    });
+                  setSelected((selected) =>
+                    replaceItem(selected, index, newSelected)
+                  );
+                }}
               />
             ))}
           </tbody>

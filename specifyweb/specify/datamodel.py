@@ -6637,7 +6637,8 @@ datamodel = Datamodel(tables=[
             Field(name='tableList', column='TableList', indexed=False, unique=False, required=True, type='java.lang.String', length=500),
             Field(name='timestampCreated', column='TimestampCreated', indexed=False, unique=False, required=True, type='java.sql.Timestamp'),
             Field(name='timestampModified', column='TimestampModified', indexed=False, unique=False, required=False, type='java.sql.Timestamp'),
-            Field(name='version', column='Version', indexed=False, unique=False, required=False, type='java.lang.Integer')
+            Field(name='version', column='Version', indexed=False, unique=False, required=False, type='java.lang.Integer'),
+            Field(name='isStrict', column='IsStrict', indexed=False, unique=False, required=True, type='java.lang.Boolean')
         ],
         indexes=[
 
@@ -8245,7 +8246,8 @@ datamodel = Datamodel(tables=[
             Field(name='timestampModified', column='TimestampModified', indexed=False, unique=False, required=False, type='java.sql.Timestamp'),
             Field(name='text1', column='Text1', indexed=False, unique=False, required=False, type='java.lang.String', length=255),
             Field(name='text2', column='Text2', indexed=False, unique=False, required=False, type='java.lang.String', length=255),
-            Field(name='text3', column='Text3', indexed=False, unique=False, required=False, type='java.lang.String', length=255)
+            Field(name='text3', column='Text3', indexed=False, unique=False, required=False, type='java.lang.String', length=255),
+            Field(name='catalogNumberFormatName', column='CatalogNumberFormatName', indexed=False, unique=False, required=False, type='java.lang.String', length=255)
         ],
         indexes=[
 
@@ -8296,7 +8298,6 @@ datamodel = Datamodel(tables=[
         relationships=[
             Relationship(name='collection', type='many-to-one', required=False, relatedModelName='Collection', column='CollectionID'),
             Relationship(name='cogType', type='many-to-one', required=True, relatedModelName='CollectionObjectGroupType', column='COGTypeID'),
-            Relationship(name='parentCog', type='many-to-one', required=False, relatedModelName='CollectionObjectGroup', column='ParentCogID'),
             Relationship(name='cojo', type='one-to-one', required=False, relatedModelName='CollectionObjectGroupJoin',otherSideName='childCog', dependent=True),
             Relationship(name='children', type='one-to-many', required=False, dependent=True, relatedModelName='CollectionObjectGroupJoin', otherSideName='parentCog'),
             Relationship(name='createdByAgent', type='many-to-one', required=False, relatedModelName='Agent', column='CreatedByAgentID'),
@@ -8398,7 +8399,8 @@ datamodel = Datamodel(tables=[
             Field(name='timestampCreated', column='TimestampCreated', indexed=False, unique=False, required=True, type='java.sql.Timestamp'),
             Field(name='timestampModified', column='TimestampModified', indexed=False, unique=False, required=False, type='java.sql.Timestamp'),
             Field(name='yesno1', column='YesNo1', indexed=False, unique=False, required=False, type='java.lang.Boolean'),
-            Field(name='yesno2', column='YesNo2', indexed=False, unique=False, required=False, type='java.lang.Boolean')
+            Field(name='yesno2', column='YesNo2', indexed=False, unique=False, required=False, type='java.lang.Boolean'),
+            Field(name='version', column='Version', indexed=False, unique=False, required=False, type='java.lang.Integer'),
         ],
         indexes=[
 
@@ -8406,7 +8408,7 @@ datamodel = Datamodel(tables=[
         relationships=[
             Relationship(name='agent1', type='many-to-one', required=False, relatedModelName='Agent', column='Agent1ID'),
             Relationship(name='absoluteAgeAttachments', type='one-to-many', required=False, relatedModelName='AbsoluteAgeAttachment', otherSideName='absoluteAge', dependent=True),
-            Relationship(name='collectionObject', type='many-to-one', required=True, relatedModelName='CollectionObject', column='CollectionObjectID'),
+            Relationship(name='collectionObject', type='many-to-one', required=True, relatedModelName='CollectionObject', column='CollectionObjectID', otherSideName='absoluteAges'),
             Relationship(name='absoluteAgeCitations', type='one-to-many',required=False, relatedModelName='AbsoluteAgeCitation', otherSideName='absoluteAge', dependent=True),
             Relationship(name='createdByAgent', type='many-to-one', required=False, relatedModelName='Agent', column='CreatedByAgentID'),
             Relationship(name='modifiedByAgent', type='many-to-one', required=False, relatedModelName='Agent', column='ModifiedByAgentID')
@@ -8443,7 +8445,8 @@ datamodel = Datamodel(tables=[
             Field(name='verbatimName', column='VerbatimName', indexed=False, unique=False, required=False, type='text'),
             Field(name='verbatimPeriod', column='VerbatimPeriod', indexed=False, unique=False, required=False, type='text'),
             Field(name='yesno1', column='YesNo1', indexed=False, unique=False, required=False, type='java.lang.Boolean'),
-            Field(name='yesno2', column='YesNo2', indexed=False, unique=False, required=False, type='java.lang.Boolean')
+            Field(name='yesno2', column='YesNo2', indexed=False, unique=False, required=False, type='java.lang.Boolean'),
+            Field(name='version', column='Version', indexed=False, unique=False, required=False, type='java.lang.Integer'),
         ],
         indexes=[
 
@@ -8454,7 +8457,7 @@ datamodel = Datamodel(tables=[
             Relationship(name='agent1', type='many-to-one', required=False, relatedModelName='Agent', column='Agent1ID'),
             Relationship(name='agent2', type='many-to-one', required=False, relatedModelName='Agent', column='Agent2ID'),
             Relationship(name='relativeAgeAttachments', type='one-to-many', required=False, relatedModelName='RelativeAgeAttachment', otherSideName='relativeAge', dependent=True),
-            Relationship(name='collectionObject', type='many-to-one', required=True, relatedModelName='CollectionObject', column='CollectionObjectID'),
+            Relationship(name='collectionObject', type='many-to-one', required=True, relatedModelName='CollectionObject', column='CollectionObjectID', otherSideName='relativeAges'),
             Relationship(name='relativeAgeCitations', type='one-to-many',required=False, relatedModelName='RelativeAgeCitation', otherSideName='relativeAge', dependent=True),
             Relationship(name='createdByAgent', type='many-to-one', required=False, relatedModelName='Agent', column='CreatedByAgentID'),
             Relationship(name='modifiedByAgent', type='many-to-one', required=False, relatedModelName='Agent', column='ModifiedByAgentID')
@@ -8698,6 +8701,7 @@ datamodel = Datamodel(tables=[
             Relationship(name='parent', type='many-to-one', required=True, relatedModelName='TectonicUnit', column='ParentID'),
             Relationship(name='definition', type='many-to-one', required=True, relatedModelName='TectonicUnitTreeDef', column='TectonicUnitTreeDefID', otherSideName='treeEntries'),
             Relationship(name='definitionItem', type='many-to-one', required=True, relatedModelName='TectonicUnitTreeDefItem', column='TectonicUnitTreeDefItemID', otherSideName='treeEntries'),
+            Relationship(name='paleoContexts', type='one-to-many',required=False, relatedModelName='PaleoContext', otherSideName='tectonicUnit'),
         ],
         fieldAliases=[
             {'vname':'acceptedParent', 'aname':'acceptedTectonicUnit'}
