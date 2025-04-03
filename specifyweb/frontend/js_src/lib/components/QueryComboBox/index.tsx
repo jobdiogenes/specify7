@@ -12,7 +12,7 @@ import type { RA } from '../../utils/types';
 import { filterArray, localized } from '../../utils/types';
 import { DataEntry } from '../Atoms/DataEntry';
 import { LoadingContext, ReadOnlyContext } from '../Core/Contexts';
-import { backboneFieldSeparator, toTable } from '../DataModel/helpers';
+import { backboneFieldSeparator } from '../DataModel/helpers';
 import type { AnySchema } from '../DataModel/helperTypes';
 import type { SpecifyResource } from '../DataModel/legacyTypes';
 import {
@@ -47,6 +47,7 @@ import {
   getRelatedCollectionId,
   makeComboBoxQuery,
   pendingValueToResource,
+  useQueryComboBoxDefaults,
 } from './helpers';
 import type { TypeSearch } from './spec';
 import { useCollectionRelationships } from './useCollectionRelationships';
@@ -72,6 +73,7 @@ export function QueryComboBox({
   typeSearch: initialTypeSearch,
   forceCollection,
   searchView,
+  defaultRecord,
   relatedTable: initialRelatedTable,
 }: {
   readonly id: string | undefined;
@@ -87,41 +89,12 @@ export function QueryComboBox({
   readonly typeSearch: TypeSearch | string | undefined;
   readonly forceCollection: number | undefined;
   readonly searchView?: string;
+  readonly defaultRecord?: string | undefined;
   readonly relatedTable?: SpecifyTable | undefined;
 }): JSX.Element {
   React.useEffect(() => {
-    if (resource === undefined || !resource.isNew()) return;
-    if (field.name === 'cataloger') {
-      const record = toTable(resource, 'CollectionObject');
-      record?.set(
-        'cataloger',
-        record?.get('cataloger') ?? userInformation.agent.resource_uri,
-        {
-          silent: true,
-        }
-      );
-    }
-    if (field.name === 'specifyUser') {
-      const record = toTable(resource, 'RecordSet');
-      record?.set(
-        'specifyUser',
-        record?.get('specifyUser') ?? userInformation.resource_uri,
-        {
-          silent: true,
-        }
-      );
-    }
-    if (field.name === 'receivedBy') {
-      const record = toTable(resource, 'LoanReturnPreparation');
-      record?.set(
-        'receivedBy',
-        record?.get('receivedBy') ?? userInformation.agent.resource_uri,
-        {
-          silent: true,
-        }
-      );
-    }
-  }, [resource, field]);
+    useQueryComboBoxDefaults({ resource, field, defaultRecord });
+  }, [resource, field, defaultRecord]);
 
   const treeData = useTreeData(resource, field);
   const collectionRelationships = useCollectionRelationships(resource);
@@ -265,10 +238,10 @@ export function QueryComboBox({
     field.relatedTable;
 
   const [fetchedTreeDefinition] = useAsyncState(
-    React.useCallback(
-      async () =>
-        resource?.specifyTable === tables.Determination &&
-        resource.collection?.related?.specifyTable === tables.CollectionObject
+    React.useCallback(async () => {
+      if (resource?.specifyTable === tables.Determination) {
+        return resource.collection?.related?.specifyTable ===
+          tables.CollectionObject
           ? (resource.collection?.related as SpecifyResource<CollectionObject>)
               .rgetPromise('collectionObjectType')
               .then(
@@ -278,9 +251,16 @@ export function QueryComboBox({
                     | undefined
                 ) => collectionObjectType?.get('taxonTreeDef')
               )
-          : undefined,
-      [resource, resource?.collection?.related?.get('collectionObjectType')]
-    ),
+          : undefined;
+      } else if (resource?.specifyTable === tables.Taxon) {
+        const definition = resource.get('definition');
+        const parentDefinition = (
+          resource?.independentResources?.parent as SpecifyResource<AnySchema>
+        )?.get?.('definition');
+        return definition || parentDefinition;
+      }
+      return undefined;
+    }, [resource, resource?.collection?.related?.get('collectionObjectType')]),
     false
   );
 
@@ -524,41 +504,45 @@ export function QueryComboBox({
                                 .map(serializeResource)
                                 .map(({ fieldName, startValue }) =>
                                   fieldName === 'rankId'
-                                ? {
-                                    field: 'rankId',
-                                    isRelationship: false,
-                                    isNot: false,
-                                    operation: 'less',
-                                    value: startValue,
-                                  }
-                                : fieldName === 'nodeNumber'
-                                  ? {
-                                      field: 'nodeNumber',
-                                      isRelationship: false,
-                                      operation: 'between',
-                                      isNot: true,
-                                      value: startValue,
-                                    }
-                                  : fieldName === 'collectionRelTypeId'
                                     ? {
-                                        field: 'id',
+                                        field: 'rankId',
                                         isRelationship: false,
-                                        operation: 'in',
                                         isNot: false,
+                                        operation: 'less',
                                         value: startValue,
                                       }
-                                    : fieldName === 'taxonTreeDefId'
+                                    : fieldName === 'nodeNumber'
                                       ? {
-                                          field: 'definition',
-                                          isRelationship: true,
-                                          operation: 'in',
-                                          isNot: false,
-                                          value: startValue
+                                          field: 'nodeNumber',
+                                          isRelationship: false,
+                                          operation: 'between',
+                                          isNot: true,
+                                          value: startValue,
                                         }
-                                    : f.error(`extended filter not created`, {
-                                        fieldName,
-                                        startValue,
-                                      }))
+                                      : fieldName === 'collectionRelTypeId'
+                                        ? {
+                                            field: 'id',
+                                            isRelationship: false,
+                                            operation: 'in',
+                                            isNot: false,
+                                            value: startValue,
+                                          }
+                                        : fieldName === 'taxonTreeDefId'
+                                          ? {
+                                              field: 'definition',
+                                              isRelationship: true,
+                                              operation: 'in',
+                                              isNot: false,
+                                              value: startValue,
+                                            }
+                                          : f.error(
+                                              `extended filter not created`,
+                                              {
+                                                fieldName,
+                                                startValue,
+                                              }
+                                            )
+                                )
                             ),
                           })
                       : undefined
